@@ -1,0 +1,66 @@
+name: build-spoofkpf
+
+# Builds a custom palera1n KPF (checkra1n-kpf-pongo) with the SpoofKPF component
+# injected. Output artifact is fed to:  palera1n -K checkra1n-kpf-pongo
+#
+# Approach: this repo is a tiny OVERLAY. CI clones palera1n/PongoOS@iOS15 fresh,
+# drops src/spoof.c into checkra1n/kpf/, injects the component registration into
+# kpf_components[] in main.c, then runs the upstream `make`. Nothing else is
+# forked, so we always build against current upstream.
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    # Upstream iOS15 CI builds on macOS (uses `xcrun -sdk iphoneos clang`).
+    runs-on: macos-latest
+    steps:
+      - name: Checkout SpoofKPF overlay
+        uses: actions/checkout@v4
+
+      - name: Clone palera1n/PongoOS (iOS15) with submodules
+        run: |
+          git clone --branch iOS15 --recursive \
+            https://github.com/palera1n/PongoOS.git pongo
+
+      - name: Inject SpoofKPF component
+        run: |
+          set -euo pipefail
+          cp src/spoof.c pongo/checkra1n/kpf/spoof.c
+          MAIN=pongo/checkra1n/kpf/main.c
+
+          # Add an extern decl before the kpf_components[] array and insert
+          # &kpf_spoof, as the first entry. -0 = slurp whole file (array opening
+          # brace is on the line after '=').
+          perl -0pi -e \
+            's/(kpf_component_t\*\s*const\s+kpf_components\[\]\s*=\s*\{)/extern kpf_component_t kpf_spoof;\n$1\n    \&kpf_spoof,/s' \
+            "$MAIN"
+
+          echo "----- registration check -----"
+          grep -n "kpf_spoof" "$MAIN" || { echo "INJECTION FAILED (no kpf_spoof)"; exit 1; }
+          COUNT=$(grep -c "&kpf_spoof" "$MAIN")
+          if [ "$COUNT" != "1" ]; then
+            echo "INJECTION FAILED: expected exactly one &kpf_spoof entry, got $COUNT"
+            exit 1
+          fi
+          echo "injection OK"
+
+      - name: Build (make)
+        run: |
+          cd pongo
+          make
+
+      - name: Sanity-check build outputs exist
+        run: |
+          ls -l pongo/build/checkra1n-kpf-pongo pongo/build/Pongo.bin
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: spoofkpf
+          path: |
+            pongo/build/checkra1n-kpf-pongo
+            pongo/build/Pongo.bin
+          if-no-files-found: error
