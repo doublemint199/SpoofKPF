@@ -12,6 +12,9 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: write   # allow GITHUB_TOKEN to publish the 'latest' release
+
 jobs:
   build:
     # Upstream iOS15 CI builds on macOS (uses `xcrun -sdk iphoneos clang`).
@@ -64,3 +67,14 @@ jobs:
             pongo/build/checkra1n-kpf-pongo
             pongo/build/Pongo.bin
           if-no-files-found: error
+
+      # Publish to a rolling 'latest' release so the palen1x host can fetch the
+      # KPF with a plain unauthenticated curl (public repo).
+      - name: Publish 'latest' release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: latest
+          files: |
+            pongo/build/checkra1n-kpf-pongo
+            pongo/build/Pongo.bin
