@@ -23,10 +23,20 @@ jobs:
       - name: Checkout SpoofKPF overlay
         uses: actions/checkout@v4
 
-      - name: Clone palera1n/PongoOS (iOS15) with submodules
+      - name: Clone palera1n/PongoOS pinned to palera1n loader v2.3
+        # v2.3 loader has NO pin; it downloads pongo/kpf from a moving CDN. This
+        # commit is the newest iOS15 commit at/before the v2.3 build (2025-05-27),
+        # i.e. the version the v2.3 loader was built against. Building from iOS15
+        # HEAD produces a KPF that is INCOMPATIBLE with the v2.3 loader (jailbreak
+        # fails to complete). See PROJECT8_NOTES §13.13.
+        env:
+          PONGO_REF: c2e123aacadaafaa6ae654bea2cf8cd2324ae933
         run: |
-          git clone --branch iOS15 --recursive \
-            https://github.com/palera1n/PongoOS.git pongo
+          git clone https://github.com/palera1n/PongoOS.git pongo
+          cd pongo
+          git checkout "$PONGO_REF"
+          git submodule update --init --recursive
+          echo "PongoOS pinned at: $(git rev-parse HEAD)"
 
       - name: Inject SpoofKPF component
         run: |
