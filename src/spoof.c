@@ -99,19 +99,20 @@ static void kpf_spoof_bootprep(struct mach_header_64 *hdr)
 {
     (void)hdr;
 
+    /* GATE MODEL CHANGE — boot-arg gate abandoned (unreliable). Confirmed on
+     * device: at bootprep time the DT /chosen "boot-args" prop does NOT yet hold
+     * palera1n's `-e` args (runtime /chosen has no boot-args prop at all), so the
+     * boot-arg gate never fired. Instead we gate EXTERNALLY: loading THIS KPF
+     * means spoof is active; the clean-recovery path of §7 is a STOCK boot
+     * (palera1n without -K) — a normal un-patched jailbreak, proven by go2.sh.
+     * The boot-arg check is kept for diagnostics only. */
     g_spoof_enabled = spoof_gate_enabled();
-    if (!g_spoof_enabled) {
-        puts("[SpoofKPF] gate OFF (no spoof=1) — clean pass-through, no writes");
-        return;
-    }
-
-    puts("[SpoofKPF] gate ON (spoof=1) — applying device-tree patches");
+    puts(g_spoof_enabled ? "[SpoofKPF] boot-arg spoof=1 present (diag)"
+                         : "[SpoofKPF] boot-arg gate not set — using external gate");
 
     /* -----------------------------------------------------------------------
-     * P1a — SINGLE observable write this round: serial-number only.
-     * Sentinel is a 12-char, Apple-serial-shaped string that is unmistakably
-     * ours when read back via `ioreg` IOPlatformSerialNumber over the LAN.
-     * Real per-identity serials come in P6; this proves the mechanism first.
+     * P1a — SINGLE observable write: serial-number only. 12-char Apple-shaped
+     * sentinel, unmistakable when read back via ioreg IOPlatformSerialNumber.
      * --------------------------------------------------------------------- */
     dt_set_root_str("serial-number", "P8SPOOF0TEST");
 
