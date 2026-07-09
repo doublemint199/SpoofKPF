@@ -75,7 +75,7 @@ static bool spoof_gate_enabled(void)
  * the new value. Returns true on success, false if the prop is missing or the
  * new value would not fit (in which case nothing is written).
  */
-static bool dt_set_root_str(const char *key, const char *val)
+static bool __attribute__((unused)) dt_set_root_str(const char *key, const char *val)
 {
     size_t len = 0;
     char *p = (char *)dt_prop(gDeviceTree, key, &len);
@@ -95,6 +95,40 @@ static bool dt_set_root_str(const char *key, const char *val)
     return true;
 }
 
+/*
+ * In-place overwrite that may GROW the logical length by up to the prop's
+ * 4-byte-alignment slack. Apple DTB stores each prop value padded to a 4-byte
+ * boundary, so a 9-byte value ("iPhone8,1") physically occupies 12 bytes — 3
+ * bytes of slack. We write up to that physical size and bump the prop's length
+ * field (the uint32_t immediately before val in dt_prop_t) WITHOUT resizing the
+ * DT blob. The top flag byte of len (bit 31 = placeholder marker in Apple DT) is
+ * preserved; only the low 24 bits carry the length.
+ * This is how model iPhone8,1(9) -> iPhone15,2(10) fits in place.
+ */
+static bool __attribute__((unused)) dt_set_root_str_grow(const char *key, const char *val)
+{
+    size_t len = 0;
+    char *p = (char *)dt_prop(gDeviceTree, key, &len);
+    if (p == NULL) {
+        printf("[SpoofKPF] grow '%s' NOT found — skip\n", key);
+        return false;
+    }
+    size_t vlen = strlen(val);
+    size_t phys = (len + 3u) & ~((size_t)3u);   /* value padded to 4-byte boundary */
+    if (vlen > phys) {
+        printf("[SpoofKPF] grow '%s' no slack (need %u, phys %u) — skip\n",
+               key, (unsigned)vlen, (unsigned)phys);
+        return false;
+    }
+    uint32_t *lenp = (uint32_t *)(p - 4);       /* dt_prop_t.len precedes val */
+    memset(p, 0, phys);
+    memcpy(p, val, vlen);
+    *lenp = (*lenp & 0xff000000u) | ((uint32_t)vlen & 0x00ffffffu);
+    printf("[SpoofKPF] grow '%s' -> '%s' (len %u->%u, phys %u)\n",
+           key, val, (unsigned)len, (unsigned)vlen, (unsigned)phys);
+    return true;
+}
+
 static void kpf_spoof_bootprep(struct mach_header_64 *hdr)
 {
     (void)hdr;
@@ -111,19 +145,18 @@ static void kpf_spoof_bootprep(struct mach_header_64 *hdr)
                          : "[SpoofKPF] boot-arg gate not set — using external gate");
 
     /* -----------------------------------------------------------------------
-     * P1a — SINGLE observable write: serial-number only. 12-char Apple-shaped
-     * sentinel, unmistakable when read back via ioreg IOPlatformSerialNumber.
+     * P2b — THE prize: model iPhone8,1(9) -> iPhone15,2(10). +1 byte, fitted via
+     * the DT prop's 4-byte-alignment slack (dt_set_root_str_grow). serial-number
+     * is NOT touched — it breaks activation (§13.15). Afterward we observe over
+     * the LAN whether hw.machine follows (it may derive from DT) via sysctl/ioreg.
+     * Isolated single write this round (§7).
      * --------------------------------------------------------------------- */
-    dt_set_root_str("serial-number", "P8SPOOF0TEST");
+    dt_set_root_str_grow("model", "iPhone15,2");
 
-    /* -----------------------------------------------------------------------
-     * P1b TODO (add one at a time, boot-test each — §7):
-     *   region-info, model-number, regulatory-model-number   (32B buffers)
-     *   target-type  N71 -> D73                               (3B == 3B)
-     *   hw.model board N71AP -> D73AP  (verify source: DT vs kernel literal)
-     * P2b (separate): DT model + sysctl hw.machine -> iPhone15,2 via pointer
-     *   redirect (+1 byte, cannot overwrite in place).
-     * --------------------------------------------------------------------- */
+    /* P1b (safe, no activation impact) — add later, one at a time, boot-test:
+     *   region-info, model-number(->MQ0E3), regulatory-model-number(->A2650),
+     *   target-type(N71->D73). If hw.machine does NOT follow model, that string
+     *   is kernel-level and needs a separate patch. */
 }
 
 /*
